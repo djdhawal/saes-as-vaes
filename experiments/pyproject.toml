@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "saevae"
+version = "0.1.0"
+description = "SAE vs VAE comparison on cached LLM activations (PGM final project)"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0",
+    "numpy",
+    "transformer_lens",
+    "sae_lens",
+    "datasets",
+    "wandb",
+    "tqdm",
+    "einops",
+    "pyyaml",
+    "scipy",
+    "matplotlib",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["saevae*"]

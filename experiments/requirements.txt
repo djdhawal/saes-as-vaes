@@ -1,0 +1,11 @@
+torch>=2.0
+numpy
+transformer_lens
+sae_lens
+datasets
+wandb
+tqdm
+einops
+pyyaml
+scipy
+matplotlib

@@ -1,0 +1,38 @@
+# Base training config. Family-specific sweep configs (sae_lambda_sweep.yaml,
+# gauss_vae_beta_sweep.yaml, spike_slab_pi_sweep.yaml) override individual
+# fields. See saevae/config.py:TrainConfig for the full schema.
+
+family: sae           # one of: sae | vae_gauss | vae_spikeslab
+d_model: 768
+d_dict: 3072
+batch_size: 4096      # T4: 4096, A100: 16384
+steps: 50000
+lr: 1.0e-3
+warmup_steps: 1000
+grad_clip: 1.0
+eval_every: 2000
+eval_subsample: 50000
+seed: 0
+num_workers: 2
+amp_dtype: bfloat16   # bfloat16 (A100) | float16 (T4) | float32 (debug)
+
+# Family-specific (only the relevant one is read by each trainer):
+lam: 0.01             # SAE L1 coefficient
+beta: 1.0             # Gaussian-VAE KL coefficient
+pi: 0.1               # Spike-slab prior gate probability
+tau_init: 1.0         # Spike-slab Gumbel temperature start
+tau_min: 0.3          # Spike-slab Gumbel temperature floor
+kl_warmup_steps: 5000 # VAE KL linear warmup
+
+# SAE dead-feature resampling
+resample_every: 10000
+resample_window: 5000
+resample_fire_threshold: 1.0e-5
+
+# Logging
+wandb_project: saes-as-vaes
+wandb_entity: null
+
+# Paths (resolved relative to cwd at run time; Drive-mounted on Colab)
+activations_dir: activations_data
+checkpoint_dir: checkpoints

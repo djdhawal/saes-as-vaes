@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Proposal PDF
+PGM - Final Project Proposal.pdf
+
+# Experiment notes
+sae_vae_experiments.md
