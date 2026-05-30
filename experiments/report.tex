@@ -1,0 +1,448 @@
+\documentclass{article}
+
+\usepackage[nonatbib, preprint]{neurips_2023}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{float}
+
+\title{Sparse Autoencoders as MAP Inference:\\ A Variational Perspective on Mechanistic Interpretability}
+
+\author{%
+  Dhawal Dixit \\
+  University of Chicago\\
+  \texttt{dhawal@uchicago.edu} \\
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Sparse Autoencoders (SAEs) are widely used in mechanistic interpretability and alignment research for decomposing large language model activations into interpretable features. We observe the training objective of an SAE as a MAP estimate analogue for a latent variable model with a sparse prior and linear-Gaussian likelihood. We replace the SAE's point estimate with full variational inference via a Variational Autoencoder (VAE). We train SAEs, Gaussian-prior VAEs, and Sparse-prior VAEs on activations from a toy model with known ground-truth features. We evaluate the model performance along the reconstruction--sparsity Pareto frontier. We find that SAEs outperform sparse prior VAEs on reconstruction quality at matched sparsity levels. This is consistent with the theoretical expectation that MAP is more efficient when the posterior is sharply peaked. However, we identify that the VAE's distributional output provides three capabilities inaccessible to the SAE: calibrated feature detection, honest ambiguity representation on boundary inputs, and a dedicated out-of-distribution signal via the KL divergence term of the ELBO. Our findings establish settings where Bayesian framing of SAEs is useful. Our code is available at \url{https://github.com/djdhawal/saes-as-vaes}.
+\end{abstract}
+
+\section{Introduction}
+
+Sparse Autoencoders (SAEs) have emerged as the primary tool for extracting interpretable features from the internal activations of large language models (LLMs) [1, 2]. Given an activation vector $x \in \mathbb{R}^{d_\text{model}}$ from an intermediate layer, an SAE learns an overcomplete dictionary of feature directions by minimizing:
+\begin{equation}
+\mathcal{L}_{\text{SAE}}(x) = \|x - W_d \, \text{ReLU}(W_e x + b_e)\|^2 + \lambda \|z\|_1
+\label{eq:sae_loss}
+\end{equation}
+
+\begin{equation}
+z \sim p(z; \theta_\text{prior}), \qquad x \mid z \sim \mathcal{N}(W_d z,\, \sigma^2 I)
+\label{eq:generative}
+\end{equation}
+Under a Laplace prior $p(z_i) = \frac{1}{2b}\exp(-|z_i|/b)$, the MAP objective becomes:
+\begin{equation}
+z^* = \arg\min_z \;\|x - W_d z\|^2 + \frac{\sigma^2}{b}\|z\|_1
+\end{equation}
+
+which is identical to the SAE loss~\eqref{eq:sae_loss} with $\lambda = \sigma^2/b$, up to a ReLU constraint on $z$. 
+
+The SAE is a regularized autoencoder, and its encoder provides an amortized approximation to the MAP estimator. Or, in our attempt to find a $z^*$, which minimizes the objective, we approximate the MAP by learning an autoencoder. This correspondence motivates our experiment. We ask what would happen, if this map estimate is replaced by a full variational inference (VI) for the same model, which is a VAE. We test if the prior matters more than the inference procedure, and which of them dis-entangles features reliably.
+
+We investigate this question by training three model families on the same activation data: (1) Sparse Autoencoder, (2) VAE with a standard Gaussian prior, and (3) VAE with a Laplace prior (VI with a sparsity favoring prior). We use the Toy Models framework [6] established by N. Elhange et al. , where ground-truth features are known, enabling a quantitative comparison.
+
+We provide a clean empirical comparison of MAP vs.\ variational inference on a controlled feature-recovery task, finding that MAP Pareto-dominates VI on the reconstruction--sparsity frontier. Second, we identify three settings:
+\begin{itemize}
+    \item Calibration
+    \item Ambiguity Handling
+    \item Out-of-Distribution Detection
+\end{itemize}
+where the VAE's distributional output provides insights which are inaccessible to the SAE. Third, we discuss the implications of these findings for the practice of mechanistic interpretability.
+
+
+\section{Related work}
+
+
+\paragraph{Sparse Autoencoders for mechanistic interpretability.}
+Bricken et al.~[1] demonstrated that SAEs trained on transformer activations recover interpretable, monosemantic features from polysemantic neurons, scaling the dictionary learning approach of Sharkey et al.~[11] and Cunningham et al.~[2]. The Anthropic team subsequently scaled SAEs to frontier models like Claude, identifying millions of interpretable features [7].
+
+\paragraph{Toy models of superposition.}
+Elhage et al.~[6] introduced a minimal synthetic setup demonstrating that neural networks store more features than they have dimensions by exploiting \emph{superposition}: sparse features are encoded in overlapping directions, with the degree of overlap governed by feature sparsity and importance. This setup provides ground-truth feature directions, making it ideal for controlled comparison of feature recovery methods. We adopt this framework directly and train our SAE and VAE variants on activations from the superposition bottleneck.
+
+\paragraph{Variational Autoencoders.}
+VAEs [8, 9] perform amortized variational inference by learning an encoder $q_\phi(z \mid x)$ that approximates the posterior and optimizing the evidence lower bound (ELBO). The $\beta$-VAE variant [10] adds a coefficient to the KL term, providing a knob to trade off reconstruction quality against posterior regularization. Our Gaussian-prior VAE is a standard $\beta$-VAE; our Laplace-prior VAE replaces the Gaussian prior with a Laplace distribution, computing the KL divergence in closed form via the analytic expression for $\mathbb{E}_{z\sim\mathcal{N}(\mu,\sigma^2)}[|z|]$.
+
+\paragraph{Disentangled representations.}
+The goal of finding independent, interpretable factors in neural representations connects our work to the disentangled representation learning literature [12, 13]. However, our focus is narrower: rather than learning disentangled representations of \emph{data}, we are decomposing the \emph{internal activations} of a pretrained model into interpretable features. The SAE's sparsity constraint plays a role analogous to the $\beta$-VAE's KL penalty in encouraging disentanglement, but the mechanism and evaluation differ.
+
+\paragraph{Bayesian approaches to neural network interpretability.}
+Several works have applied Bayesian methods to understand neural network internals. Daxberger et al.~[14] used Laplace approximations for uncertainty estimation in deep networks. Nalisnick et al.~[15] studied the failure of deep generative models to detect out-of-distribution inputs, a finding relevant to our OOD experiment.
+
+
+\section{Experimental setup}
+\label{sec:experiments}
+
+\subsection{Toy model of superposition}
+
+We adopt the toy model setup from Elhage et al.~[6]. The inputs are a set of sparse feature vectors $x \in \mathbb{R}^{n_\text{features}}$ where each feature $x_i$ is independently active with probability $p$. A linear bottleneck model compresses these into a lower-dimensional hidden representation:
+\begin{equation}
+h = Wx, \qquad \hat{x} = \text{ReLU}(W^\top h + b)
+\end{equation}
+where $W \in \mathbb{R}^{d_\text{hidden} \times n_\text{features}}$ with $d_\text{hidden} < n_\text{features}$, forcing superposition. The model is trained to minimize importance-weighted reconstruction loss $\sum_i I_i(x_i - \hat{x}_i)^2$.
+
+For all experiments, we use $n_\text{features} = 5$, $d_\text{hidden} = 2$, and feature probability $p = 0.1$ (90\% sparse). The columns of the learned $W$ matrix serve as ground-truth feature directions in the 2D hidden space. All SAE and VAE models operate on the hidden activations $h$ and attempt to recover the latent features.
+
+\subsection{Models}
+
+All four inference families use a latent dimension equal to the number of ground-truth features, $d_\text{latent} = n_\text{features} = 5$. This eliminates dictionary size as a confound and focuses the comparison purely on inference method and prior.
+
+\paragraph{SAE (MAP baseline).}
+The standard SAE with loss as in Eq.~\eqref{eq:sae_loss}. We sweep $\lambda \in \{0.01, 0.05, 0.1, 0.2, 0.5, 1.0\}$ to trace the Pareto frontier.
+
+\paragraph{Gaussian-prior VAE}
+A VAE with prior $p(z) = \mathcal{N}(0, I)$ and variational posterior $q_\phi(z \mid x) = \mathcal{N}(\mu_\phi(x), \text{diag}(\sigma^2_\phi(x)))$. The loss is the negative ELBO:
+\begin{equation}
+\mathcal{L}_{\text{G-VAE}} = \|h - \hat{h}\|^2 + \beta \cdot D_\text{KL}(q_\phi(z \mid h) \,\|\, p(z))
+\label{eq:gvae}
+\end{equation}
+where the KL has the closed form $-\frac{1}{2}\sum_i(1 + \log\sigma_i^2 - \mu_i^2 - \sigma_i^2)$. We sweep $\beta \in \{0.01, 0.1, 0.5, 1.0, 2.0, 5.0\}$. This model isolates the effect of distributional inference without any sparsity pressure from the prior.
+
+\paragraph{Laplace-prior VAE}
+A VAE with the same variational posterior $q_\phi(z \mid h) = \mathcal{N}(\mu, \text{diag}(\sigma^2))$ but with a Laplace prior $p(z_i) = \text{Laplace}(0, b)$. The KL divergence admits a closed-form expression by exploiting the known formula for $\mathbb{E}_{z \sim \mathcal{N}(\mu,\sigma^2)}[|z|]$:
+\begin{align}
+D_\text{KL}\bigl(\mathcal{N}(\mu,\sigma^2) \,\|\, \text{Laplace}(0,b)\bigr)
+  &= -\tfrac{1}{2}(1 + \log\sigma^2) + \log(2b) + \frac{\mathbb{E}_q[|z|]}{b} \label{eq:laplace_kl} \\
+\mathbb{E}_q[|z|] &= \sigma\sqrt{\tfrac{2}{\pi}}\,e^{-\mu^2/2\sigma^2}
+  + \mu\bigl(1 - 2\Phi(-\mu/\sigma)\bigr) \label{eq:abs_z}
+\end{align}
+where $\Phi$ is the standard normal CDF. We sweep the Laplace scale $b \in \{0.1, 0.5, 1.0, 2.0, 5.0\}$ and $\beta \in \{0.1, 0.3, 0.5\}$. 
+
+\paragraph{Spike-and-slab VAE.}
+A VAE with a two-component spike-and-slab prior $p(z_i) = (1-\pi)\,\delta_0 + \pi\,\mathcal{N}(0,1)$, which places a point mass at zero with probability $1-\pi$ and a Gaussian slab otherwise. The variational posterior mirrors this structure, with $q_{\pi_i} = \sigma$, is the $i_th$ gate logic, which approximates the posterior inclusion probability. During training the gate is soft and at evaluation it is hard, meaning the gate\_logit $> 0$. The latent is $z_i = \gamma_i \cdot \tilde{z}_i$ where $\gamma_i$ is the gate sample and $\tilde{z}_i \sim \mathcal{N}(\mu_i, \sigma_i^2)$. The KL decomposes per latent into a gate term and a slab term:
+\begin{equation}
+D_\text{KL}^{(i)} = \underbrace{D_\text{KL}\!\bigl(\text{Bern}(q_{\pi_i})\,\|\,\text{Bern}(\pi)\bigr)}_{\text{gate KL}}
+  + \; q_{\pi_i} \cdot \underbrace{D_\text{KL}\!\bigl(\mathcal{N}(\mu_i,\sigma_i^2)\,\|\,\mathcal{N}(0,1)\bigr)}_{\text{slab KL}}
+\label{eq:spikeslab_kl}
+\end{equation}
+Free bits (0.5 nats per latent) are applied before multiplying by $\beta$ to prevent the trivial ``all gates off'' collapse. We sweep $\pi \in \{0.5, 0.3, 0.1, 0.05, 0.02\}$ and $\beta \in \{0.01, 0.3\}$.
+
+\subsection{Evaluation metrics}
+
+We evaluate all models on two primary metrics computed over a held-out set of 10{,}000 activations:
+
+\begin{enumerate}
+\item \textbf{Reconstruction MSE:} $\frac{1}{N}\sum_{i=1}^N \|x_i - \hat{x}_i\|^2$, measuring activation reconstruction quality.
+\item \textbf{L0 sparsity:} average number of active latents per input, using per-family conventions. For the SAE, a latent is active if $z_i > 0$ (post-ReLU support). For Gaussian and Laplace VAEs, we threshold the posterior mean at $|\mu_i| > 0.1$. For the spike-slab VAE, we report both \emph{hard L0} (gate logit $> 0$ at evaluation time) and \emph{expected L0} ($\mathbb{E}[L_0] = \sum_i \sigma(\text{gate\_logit}_i)$), which differ substantially due to the gate-collapse pathology described in Section~\ref{sec:pareto}.
+\end{enumerate}
+
+
+\section{Implementation details}
+\label{sec:implementation}
+
+\paragraph{Data generation.}
+We generate training data by running the pretrained toy model on 50{,}000 sparse input vectors. Hidden activations $h \in \mathbb{R}^2$ are cached and reused across all model training runs to eliminate data-generation variance. A separate set of 10{,}000 activations is held out for evaluation.
+
+\paragraph{Architecture.}
+All models share the same encoder and decoder dimensions: a linear encoder $\mathbb{R}^2 \to \mathbb{R}^5$ and a linear decoder $\mathbb{R}^5 \to \mathbb{R}^2$. The SAE encoder applies ReLU activation; the VAE encoder outputs $(\mu, \log \sigma^2)$ pairs via two linear heads from a shared representation. Decoder weights are unit-normalized after each gradient step for both SAE and VAE to prevent scale degeneracies.
+
+\paragraph{Training.}
+All models are trained with Adam ($\text{lr} = 10^{-3}$, default $\beta_1, \beta_2$) for 5{,}000 steps with batch size 256. VAE training uses KL annealing: the $\beta$ coefficient is linearly increased from 0 to its target value over the first 2{,}000 steps. This is critical for preventing posterior collapse, where the encoder learns to ignore the latent space and the decoder reconstructs from a constant. All runs use a fixed seed (seed 0 for the Pareto, posterior-entropy, and amortization-gap experiments; seed 42 for calibration, ambiguity, and OOD).
+
+\paragraph{Feature alignment.}
+Because the SAE and VAE learn features in arbitrary order, we align learned features to ground truth using sign-aware greedy matching: for each ground-truth direction (column of $W$), we find the best-matching decoder column by absolute cosine similarity, then record both the permutation and the sign of the match. A negative sign indicates an anti-aligned latent whose decoder column points opposite to the ground-truth direction. In calibration, anti-aligned SAE latents are assigned AUROC~$=0.5$ (chance) rather than exploiting the inversion, reflecting genuine detection failure. This permutation and sign are fixed before computing all downstream metrics.
+
+\paragraph{Compute.}
+All experiments run on CPU only. The toy model trains in seconds; each SAE or VAE run takes under one minute. The full experimental suite completes in under five minutes on a modern laptop.
+
+\paragraph{Software.}
+We use PyTorch for all model implementations. The toy model and SAE baseline follow the ARENA Sparse Autoencoder exercises [18], which replicate the setup from Elhage et al.~[6]. VAE implementations are custom.
+
+
+\section{Results}
+\label{sec:results}
+
+\subsection{Pareto frontier: reconstruction vs.\ sparsity}
+\label{sec:pareto}
+
+\begin{table}[t]
+  \caption{Representative points on the reconstruction--sparsity Pareto frontier (numbers from \texttt{reports/toy/pareto.csv}). The SAE achieves orders-of-magnitude lower MSE at the same L0. Gaussian VAE collapses to L0\,=\,0 for $\beta \geq 0.1$; Laplace VAE achieves sparse solutions only at large prior scale ($b \geq 2$). For spike-slab, the hard L0 (gate logit $>0$ at evaluation) is shown; $\mathbb{E}[L_0]$ (soft gate expectation) is reported separately since the hard gate collapses to 0 under any KL pressure $\beta \geq 0.1$.}
+  \label{tab:pareto}
+  \centering
+  \begin{tabular}{llccc}
+    \toprule
+    Method & Hyperparameter & MSE ($\downarrow$) & Hard L0 & $\mathbb{E}[L_0]$ \\
+    \midrule
+    SAE & $\lambda = 0.01$ & $1.8\times10^{-5}$ & 0.22 & 0.22 \\
+    SAE & $\lambda = 0.1$  & $1.0\times10^{-3}$ & 0.17 & 0.17 \\
+    SAE & $\lambda = 0.5$  & $1.7\times10^{-2}$ & 0.05 & 0.05 \\
+    SAE & $\lambda = 1.0$  & $2.6\times10^{-2}$ & 0.02 & 0.02 \\
+    \midrule
+    Gaussian VAE & $\beta = 0.01$ & $1.6\times10^{-2}$ & 0.53 & 0.53 \\
+    Gaussian VAE & $\beta = 0.1$  & $2.9\times10^{-2}$ & 0    & 0    \\
+    Gaussian VAE & $\beta \geq 0.1$ & ${\approx}\,2.8\times10^{-2}$ & 0 & 0 \\
+    \midrule
+    Laplace VAE & $b = 5.0, \beta = 0.1$ & $4.6\times10^{-2}$ & 1.19 & 1.19 \\
+    Laplace VAE & $b = 2.0, \beta = 0.1$ & $2.8\times10^{-2}$ & 0.12 & 0.12 \\
+    Laplace VAE & $b \leq 1.0, \beta = 0.1$ & ${\approx}\,2.7\times10^{-2}$ & 0 & 0 \\
+    \midrule
+    Spike-slab VAE & $\pi = 0.5, \beta = 0.01$ & $2.2\times10^{-3}$ & 0.20 & 2.20 \\
+    Spike-slab VAE & $\pi = 0.5, \beta = 0.3$  & $2.6\times10^{-2}$ & 0    & 1.33 \\
+    Spike-slab VAE & $\pi = 0.1, \beta = 0.3$  & $2.8\times10^{-2}$ & 0    & 0.92 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Figure~\ref{fig:pareto} and Table~\ref{tab:pareto} present the Pareto results. The picture separates into two regimes depending on how much KL pressure the VAE models are trained under.
+
+\textbf{Under proper VI pressure ($\beta \geq 0.1$).} The SAE dominates, as Gaussian VAE collapses to hard L0\,=\,0 for all $\beta \geq 0.1$ with MSE $\approx 0.028$. The gaussian VAE cannot achieve sparsity at all, because the Gaussian prior has no mechanism to drive posterior means to exactly zero. The Laplace VAE achieves sparse solutions only at extreme prior scales ($b \geq 2.0$), and even then MSE\,=\,0.046 at $b = 5.0$. For $b \leq 1.0$, it collapses identically to the Gaussian VAE. The spike-and-slab VAE at $\beta \geq 0.1$ also collapses hard L0\,=\,0 across all $\pi$ values (see gate-collapse paragraph below), with MSE $\approx 0.026$--$0.028$.
+
+\textbf{Near-zero KL weight ($\beta = 0.01$)}  At $\beta = 0.01$, the hard gate activates and the model achieves L0\,=\,0.12--0.21 with MSE\,=\,1.4$\times10^{-3}$--$2.2\times10^{-3}$. These points sit alongside the SAE cluster on the Pareto plot (Figure~\ref{fig:pareto}). When $\beta \approx 0$ the KL term is nearly inactive, so the spike-and-slab is ends up effectively doing MAP inference through the gated decoder, converging to SAE-like behavior. As $\beta$ increases toward a proper VI regime, the KL drives the gates negative and performance degrades sharply. The closing of the gap at $\beta \to 0$ is itself evidence for the MAP/VI framing: removing the variational objective makes VI approach MAP, and the reconstruction gap closes.
+
+\paragraph{Spike-and-slab gate-collapse.}
+For $\beta \geq 0.1$, the eval-time hard gate (gate\_logit $> 0$) reads L0\,=\,0 across all $\pi$ and $\beta$ configurations tested, even though the soft expected L0 ($\mathbb{E}[L_0] = \sum_i \sigma(\text{gate\_logit}_i)$) remains in the range 0.7--1.3. The KL penalty drives gate logits below 0 even when the gates encode useful information, because for small $\pi$ the sparse prior penalizes posterior gate probabilities above $\pi$, which are consistently below 0.5. The 0.5 hard threshold is therefore too strict: the posterior is not fully collapsed (the expected L0 is non-zero), but the hard gate fails to capture it.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{pareto.png}
+  \caption{Reconstruction MSE vs.\ hard L0 across hyperparameter sweeps (one point per trained model). Under proper VI pressure ($\beta \geq 0.1$), the SAE dominates all VAE variants: Gaussian and Laplace VAEs collapse to L0\,=\,0; spike-slab also collapses (gate-collapse pathology). At near-zero KL weight ($\beta = 0.01$), the spike-slab points (purple diamonds, labeled $\pi$,0.01) cluster alongside the SAE, approaching SAE-level MSE at matched L0 --- consistent with the interpretation that $\beta \to 0$ recovers MAP-like behavior.}
+  \label{fig:pareto}
+\end{figure}
+
+\subsection{Where the VAE wins: three distributional advantages}
+
+The Pareto comparison tells only half the story. The VAE produces a \emph{distribution} over latent features, not a point estimate. We now present three experiments demonstrating that this distributional output provides concrete capabilities the SAE lacks.
+
+\subsubsection{Experiment 1: Feature detection calibration}
+
+We score each ground-truth feature using each method's output: SAE ReLU activation $z_i$ and Laplace VAE posterior mean $|\mu_i|$. We compute AUROC for detecting whether each ground-truth feature was active in the input, using the sign-aware alignment from Section~\ref{sec:implementation}. An anti-aligned SAE latent (decoder column pointing \emph{opposite} to the ground-truth direction) is assigned AUROC\,=\,0.5 rather than exploiting the inversion, reflecting genuine detection failure.
+
+\begin{table}[t]
+  \caption{Per-feature detection AUROC (numbers from \texttt{reports/toy/calibration.csv}). Features marked $\dagger$ have anti-aligned SAE decoder columns (sign $= -1$); their SAE score is set to chance (0.500). The Laplace VAE detects all five features reliably.}
+  \label{tab:auroc}
+  \centering
+  \begin{tabular}{lcccccc}
+    \toprule
+    Method & Feat.\ 0$^\dagger$ & Feat.\ 1 & Feat.\ 2 & Feat.\ 3$^\dagger$ & Feat.\ 4 & Mean \\
+    \midrule
+    SAE ($z_i$)              & 0.500 & 0.491 & 0.902 & 0.500 & 0.500 & 0.579 \\
+    Laplace VAE ($|\mu_i|$)  & 0.803 & 0.889 & 0.873 & 0.752 & 0.886 & 0.840 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Table~\ref{tab:auroc} reveals a substantial gap: mean AUROC 0.579 for the SAE vs.\ 0.840 for the Laplace VAE. Latents for features 0 and 3 have decoder columns pointing in the opposite direction from the ground-truth feature, so their ReLU activations rise when the input is pushed away from those feature directions, yielding an inverted detection score. With correct polarity, these features would be detectable. The SAE cannot guarantee polarity consistency as its loss is invariant to sign flips in the decoder column. Feature 4 achieves AUROC\,=\,0.500 despite a near-perfect cosine alignment, suggesting that this latent rarely activates for this evaluation seed.
+
+The Laplace VAE is unaffected by anti-alignment because its posterior mean $\mu_i$ carries a signed value. This implies that a latent correctly encodes whether the input is near or far from the feature direction, and $|\mu_i|$ provides a calibrated detection score with a principled probabilistic interpretation.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{calibration.png}
+  \caption{Per-feature detection AUROC for the SAE and Laplace VAE. SAE features 0, 3, and 4 score at chance (0.500) due to anti-aligned or non-activating latents; only feature 2 achieves high AUROC (0.902). The Laplace VAE reliably detects all five features.}
+  \label{fig:calibration}
+\end{figure}
+
+\subsubsection{Experiment 2: Ambiguous inputs}
+
+When an input lies near the boundary between two feature directions in the 2D hidden space, the correct inference is \emph{uncertain}: either feature (or both) could be responsible for the activation. How do the two methods handle this ambiguity?
+
+We identify the two most similar feature directions, then generate inputs that interpolate from one to the other. At the maximum ambiguity, which is the midpoint, the SAE commits to a specific $z$ vector as it has no mechanism to express uncertainty. The VAE's posterior, however can spread activation mass across both features.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{ambiguity.png}
+  \caption{Feature activations as input interpolates between two similar features ($t=0$: pure feature $i$, $t=1$: pure feature $j$). The SAE commits sharply to one feature; entropy $\approx 0$ at the midpoint. The Laplace VAE spreads activation mass across both features, with entropy $\approx 0.376$ at the midpoint, honestly representing the ambiguity.}
+  \label{fig:ambiguity}
+\end{figure}
+
+Figure~\ref{fig:ambiguity} illustrates the result. The SAE exhibits a sharp transition between the two features, committing fully to one before switching to the other. The VAE spreads activation across both features near the midpoint, producing higher activation entropy. The VAE correctly reflects that the input is ambiguous. The SAE's confidence at the midpoint is overconfident.
+
+This finding connects to polysemanticity in LLM interpretability: when a neuron fires on multiple unrelated concepts, the SAE must assign that activation to a single feature (or a sparse combination), potentially misattributing the activation. The VAE's posterior uncertainty provides a natural signal for flagging such cases.
+
+\subsubsection{Experiment 3: Out-of-distribution detection}
+
+We test whether each method can detect inputs that differ from the training distribution. Three OOD conditions are evaluated against in-distribution activations: (1) random Gaussian noise, (2) dense activations (80\% features active instead of 10\%), and (3) activations scaled by $5\times$. We report AUROC for binary OOD detection (in-distribution vs.\ each condition) using each method's score.
+
+\begin{table}[t]
+  \caption{AUROC for binary OOD detection (numbers from \texttt{reports/toy/ood\_auroc.csv}). All signals perform above chance. SAE loss is competitive with VAE neg-ELBO on every condition. The VAE KL divergence provides a dedicated latent-space anomaly signal that is complementary to the reconstruction-based signals.}
+  \label{tab:ood}
+  \centering
+  \begin{tabular}{lccc}
+    \toprule
+    Signal & Random noise & Dense (80\%) & Scaled 5$\times$ \\
+    \midrule
+    VAE neg-ELBO & 0.634 & 0.803 & 0.602 \\
+    VAE KL       & 0.708 & 0.836 & 0.587 \\
+    VAE MSE      & 0.531 & 0.695 & 0.627 \\
+    SAE loss     & 0.715 & 0.837 & 0.644 \\
+    SAE MSE      & 0.672 & 0.785 & 0.610 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Table~\ref{tab:ood} shows that all five signals perform above chance at OOD detection. Notably, SAE loss (AUROC 0.715, 0.837, 0.644) matches or slightly exceeds VAE neg-ELBO (0.634, 0.803, 0.602) across all three conditions. This is unsurprising in retrospect: both combine a reconstruction term with a sparsity-inducing penalty, and the reconstruction term is the dominant OOD signal for these distributional shifts.
+
+The unique contribution of the VAE is the KL divergence as a \emph{separate} signal. VAE KL (0.708, 0.836, 0.587) is competitive with SAE loss, but it measures something different: how far the encoder's posterior deviates from the prior, i.e., the information cost of encoding this particular input. Unlike reconstruction error, the KL term flags latent-space anomalies --- inputs that require unusual posterior inference --- independently of how well they can be decoded. Dense activations illustrate this: they are plausibly reconstructed (VAE MSE AUROC 0.695), but the posterior must activate many features simultaneously, violating the sparse prior and driving up KL. The SAE has no analogue to this signal; its L1 penalty collapses the distinction between ``reconstruction cost'' and ``inference cost.''
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{ood.png}
+  \caption{AUROC for binary OOD detection across three distributional shifts. SAE loss and VAE neg-ELBO are competitive across all conditions. The VAE KL divergence provides an additional, complementary latent-space anomaly signal unavailable to the SAE.}
+  \label{fig:ood}
+\end{figure}
+
+\subsubsection{Experiment 4: Amortization gap}
+
+The SAE encoder provides an \emph{amortized} approximation to the per-input MAP solution. The true MAP solution is obtainable via iterative pursuit; we run 200 iterations of non-negative ISTA on the frozen SAE decoder ($\lambda = 0.1$, 5{,}000 training steps) and compare the resulting objective to the encoder's forward pass.
+
+\begin{table}[t]
+  \caption{Encoder vs.\ iterative ISTA optimum on 1{,}000 held-out activations (numbers from \texttt{reports/toy/amortization\_gap.csv}). The gap is negligible: the encoder is within 0.7\% of the ISTA solution.}
+  \label{tab:amort}
+  \centering
+  \begin{tabular}{lccc}
+    \toprule
+    Method & Objective & MSE & L0 \\
+    \midrule
+    Encoder (amortized)   & 0.007973 & $1.01\times10^{-3}$ & 0.175 \\
+    ISTA cold-start       & 0.007919 & $9.30\times10^{-4}$ & 0.191 \\
+    Gap (encoder $-$ ISTA) & $5.44\times10^{-5}$ & --- & --- \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Table~\ref{tab:amort} shows the amortization cost is negligible: the encoder objective is 5.44$\times10^{-5}$ above the ISTA optimum (${\approx}$0.7\% relative). On this toy, the encoder has essentially converged to the optimal amortized MAP solution. This validates the MAP interpretation: the SAE encoder is not sacrificing reconstruction quality due to amortization; the gap to exact MAP is less than measurement noise.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\textwidth]{amortization_gap.png}
+  \caption{Encoder vs.\ ISTA objective across 1{,}000 held-out activations. The gap is $5.44\times10^{-5}$ ($\approx$0.7\%), confirming that the amortized encoder closely tracks the iterative MAP optimum.}
+  \label{fig:amortgap}
+\end{figure}
+
+\subsection{Prior sensitivity of the spike-slab VAE}
+
+One claimed advantage of the Bayesian framing is that the prior provides a principled knob for encoding domain knowledge about feature sparsity. We test this by sweeping the spike-and-slab prior inclusion probability $\pi \in \{0.5, 0.3, 0.2, 0.1, 0.05, 0.02\}$ at fixed $\beta = 0.3$, measuring how the posterior gate distribution and entropy respond.
+
+\begin{table}[t]
+  \caption{Spike-slab VAE prior sensitivity sweep (numbers from \texttt{reports/toy/posterior\_entropy.csv}). Hard L0\,=\,0 throughout (gate-collapse, Section~\ref{sec:pareto}). $\mathbb{E}[L_0]$ tracks $\pi$ monotonically. Posterior entropy peaks at $\pi = 0.1$, which matches the data-generating feature probability.}
+  \label{tab:entropy}
+  \centering
+  \begin{tabular}{lcccc}
+    \toprule
+    $\pi$ & MSE & Hard L0 & $\mathbb{E}[L_0]$ & Posterior entropy \\
+    \midrule
+    0.50 & $2.61\times10^{-2}$ & 0 & 1.44 & 2.86 \\
+    0.30 & $2.77\times10^{-2}$ & 0 & 1.30 & 2.68 \\
+    0.20 & $2.58\times10^{-2}$ & 0 & 1.22 & 2.79 \\
+    0.10 & $2.77\times10^{-2}$ & 0 & 1.17 & 3.18 \\
+    0.05 & $2.76\times10^{-2}$ & 0 & 0.97 & 2.95 \\
+    0.02 & $2.80\times10^{-2}$ & 0 & 0.70 & 2.49 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\textwidth]{posterior_entropy_vs_prior.png}
+  \caption{Prior sensitivity sweep for the spike-slab VAE. $\mathbb{E}[L_0]$ declines monotonically with $\pi$; hard L0 is 0 throughout. Posterior entropy peaks at $\pi = 0.1$ (matching the data-generating feature probability) and is lower both when the prior is too permissive ($\pi = 0.5$) and too restrictive ($\pi = 0.02$).}
+  \label{fig:posteriorentropy}
+\end{figure}
+
+Table~\ref{tab:entropy} and Figure~\ref{fig:posteriorentropy} yield three findings.
+
+The prior controls soft sparsity monotonically. $\mathbb{E}[L_0]$ declines from 1.44 to 0.70 as $\pi$ falls from 0.5 to 0.02. The posterior gate distribution does respond to the prior in the expected direction: a sparser prior induces sparser expected activation. The bayesian framing encodes our belief about how many features are active per input and regularizes the posterior accordingly. The SAE's sparsity is controlled by the scalar $\lambda$, which is tuned by validation loss rather than derived from a generative model of the data.
+
+Hard L0 collapses to zero throughout. Despite healthy $\mathbb{E}[L_0]$, the hard eval-time gate (gate\_logit $> 0$) is 0 for every $\pi$ at $\beta = 0.3$. This is the gate-collapse pathology described in Section~\ref{sec:pareto}: the KL term drives gate logits below zero even when the gates carry useful information. The soft expected sparsity and the hard point-estimate sparsity are therefore decoupled --- a distinction the SAE, as a point estimator, never faces.
+
+Posterior entropy peaks at $\pi = 0.1$, the true feature probability. The mean posterior entropy is non-monotone in $\pi$: it is highest at $\pi = 0.1$ (3.18 nats) and lower at both extremes. This is interpretable: when the prior is well-specified ($\pi = 0.1$ matching the data-generating $p = 0.1$), the posterior faces genuine uncertainty about which features are active, spreading probability mass most honestly. When $\pi = 0.5$ the prior is nearly flat, providing little regularisation and allowing the posterior to be overconfident. When $\pi = 0.02$ the prior strongly suppresses all gates, forcing the posterior toward the ``all off'' solution and again reducing entropy. A well-specified prior thus maximizes posterior uncertainty. The prior constrains the hypothesis space, freeing the likelihood to spread mass across ambiguous solutions.
+
+Reconstruction is prior-insensitive. MSE is approximately flat at $\approx 0.027$ across all $\pi$, slightly above the Gaussian/Laplace VAE floor at the same $\beta$. This confirms that at $\beta = 0.3$, the KL constraint dominates reconstruction: varying $\pi$ changes how the posterior allocates sparsity but does not meaningfully improve the decoder's fit to the data. The SAE at $\lambda = 0.1$ achieves MSE $= 1.0\times10^{-3}$ this reinforces that MAP is more efficient at point reconstruction regardless of which prior we use for our VAEs.
+
+\subsection{Summary of findings}
+
+\begin{table}[htbp]
+  \caption{Summary: SAE vs.\ Laplace VAE across evaluation axes, with actual numbers from experiment CSVs.}
+  \label{tab:summary}
+  \centering
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{llll}
+    \toprule
+    Evaluation Axis & SAE (MAP) & Laplace VAE (VI) & Winner \\
+    \midrule
+    Reconstruction--sparsity Pareto & MSE $10^{-5}$--$10^{-2}$ at L0 0.02--0.22 & Higher MSE; sparse only at $b \geq 2$ & SAE \\
+    Feature detection (mean AUROC) & 0.579 (anti-aligned features at chance) & 0.840 (all features detected) & VAE \\
+    Ambiguous input handling & Commits; entropy $\approx 0$ at midpoint & Spreads; entropy $\approx 0.376$ at midpoint & VAE \\
+    OOD detection (reconstruction signal) & SAE loss AUROC: 0.715, 0.837, 0.644 & VAE neg-ELBO AUROC: 0.634, 0.803, 0.602 & Tie \\
+    OOD via latent-space signal (KL) & Not available & VAE KL AUROC: 0.708, 0.836, 0.587 & VAE \\
+    Amortization gap & $5.44\times10^{-5}$ ($\approx$0.7\% of ISTA optimum) & N/A & --- \\
+    \bottomrule
+  \end{tabular}%
+  }
+\end{table}
+
+Table~\ref{tab:summary} summarizes the trade-offs. The SAE is more efficient at point estimation: MAP concentrates all model capacity on finding the best sparse $z$ without the overhead of estimating a posterior. The VAE is richer at inference: calibrated posteriors enable reliable feature detection regardless of decoder polarity, honest ambiguity at boundary inputs, and a dedicated KL-based anomaly channel. The OOD row is notable: SAE loss and VAE neg-ELBO are competitive as reconstruction-based anomaly scores; the VAE's unique advantage is the KL term as an \emph{additional}, separable signal for latent-space anomalies.
+
+This reflects a genuine methodological trade-off: MAP is reconstruction-efficient but information-lossy; VI is costlier but information-preserving.
+
+
+\section{Future work}
+\label{sec:future}
+
+\paragraph{Hierarchical and structured priors.}
+Features in LLMs likely exhibit group structure (e.g., all ``Python syntax'' features co-activate). A hierarchical prior that groups features and models within-group dependencies would leverage the graphical model framework more fully, potentially improving both reconstruction and interpretability.
+
+\paragraph{Uncertainty-guided feature selection.}
+Our ambiguity experiment suggests that VAE posterior variance could flag polysemantic or unreliable features. A practical application would be filtering SAE features by a VAE-derived confidence score before downstream interpretability analysis.
+
+
+\section*{Acknowledgments}
+
+This work was completed as a final project for the Probabilistic Graphical Models course. We thank Dr. Mathew Walter for guidance.
+
+\section*{References}
+
+{\small
+
+[1] Bricken, T., Templeton, A., Batson, J., Chen, B., Jermyn, A., Conerly, T., Turner, N., Anil, C., Denison, C., Askell, A., Lasenby, R., Wu, Y., Kravec, S., Schiefer, N., Maxwell, T., Joseph, N., Hatfield-Dodds, Z., Tamkin, A., Nguyen, K., McLean, B., Burke, J.E., Hume, T., Carter, S., Henighan, T., and Olah, C. (2023). Towards Monosemanticity: Decomposing Language Models With Dictionary Learning. \textit{Transformer Circuits Thread}.
+
+[2] Cunningham, H., Ewart, A., Riggs, L., Huben, R., and Sharkey, L. (2023). Sparse Autoencoders Find Highly Interpretable Directions in Language Models. \textit{arXiv preprint arXiv:2309.08600}.
+
+[3] Olshausen, B.A.\ and Field, D.J.\ (1996). Emergence of simple-cell receptive field properties by learning a sparse code for natural images. \textit{Nature}, 381(6583):607--609.
+
+[4] Elad, M.\ (2010). \textit{Sparse and Redundant Representations: From Theory to Applications in Signal and Image Processing}. Springer.
+
+[5] Lewicki, M.S.\ and Sejnowski, T.J.\ (2000). Learning overcomplete representations. \textit{Neural Computation}, 12(2):337--365.
+
+[6] Elhage, N., Hume, T., Olsson, C., Schiefer, N., Henighan, T., Kravec, S., Hatfield-Dodds, Z., Lasenby, R., Drain, D., Chen, C., Grosse, R., McCandlish, S., Kaplan, J., Amodei, D., Wattenberg, M., and Olah, C. (2022). Toy Models of Superposition. \textit{Transformer Circuits Thread}.
+
+[7] Templeton, A., Conerly, T., Marcus, J., Lindsey, J., Bricken, T., Chen, B., Pearce, A., Citro, C., Ameisen, E., Jones, A., Cunningham, H., Turner, N., McDougall, C., MacDiarmid, M., Freeman, C.D., Sumers, T.R., Rees, E., Batson, J., Jermyn, A., Carter, S., Olah, C., and Henighan, T. (2024). Scaling Monosemanticity: Extracting Interpretable Features from Claude 3 Sonnet. \textit{Transformer Circuits Thread}.
+
+[8] Kingma, D.P.\ and Welling, M.\ (2013). Auto-Encoding Variational Bayes. \textit{arXiv preprint arXiv:1312.6114}.
+
+[9] Rezende, D.J., Mohamed, S., and Wierstra, D.\ (2014). Stochastic Backpropagation and Approximate Inference in Deep Generative Models. \textit{ICML}.
+
+[10] Higgins, I., Matthey, L., Pal, A., Burgess, C., Glorot, X., Botvinick, M., Mohamed, S., and Lerchner, A. (2017). beta-VAE: Learning Basic Visual Concepts with a Constrained Variational Framework. \textit{ICLR}.
+
+[11] Sharkey, L., Braun, D., and Millidge, B. (2022). Taking features out of superposition with sparse autoencoders. \textit{AI Alignment Forum}.
+
+[12] Bengio, Y., Courville, A., and Vincent, P.\ (2013). Representation Learning: A Review and New Perspectives. \textit{IEEE TPAMI}, 35(8):1798--1828.
+
+[13] Locatello, F., Bauer, S., Lucic, M., R\"{a}tsch, G., Gelly, S., Sch\"{o}lkopf, B., and Bachem, O.\ (2019). Challenging Common Assumptions in the Unsupervised Learning of Disentangled Representations. \textit{ICML}.
+
+[14] Daxberger, E., Kristiadi, A., Immer, A., Eschenhagen, R., Bauer, M., and Hennig, P.\ (2021). Laplace Redux---Effortless Bayesian Deep Learning. \textit{NeurIPS}.
+
+[15] Nalisnick, E., Matsukawa, A., Teh, Y.W., Gorur, D., and Lakshminarayanan, B.\ (2019). Do Deep Generative Models Know What They Don't Know? \textit{ICLR}.
+
+[16] Kingma, D.P., Salimans, T., Jozefowicz, R., Chen, X., Sutskever, I., and Welling, M.\ (2016). Improved Variational Inference with Inverse Autoregressive Flow. \textit{NeurIPS}.
+
+[17] Nanda, N.\ and Bloom, J.\ (2022). TransformerLens. \url{https://github.com/TransformerLensOrg/TransformerLens}.
+
+[18] ARENA (2024). Sparse Autoencoder Exercises. \url{https://arena3-chapter1-transformer-interp.streamlit.app/}.
+
+}
+
+\end{document}
